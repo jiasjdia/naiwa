@@ -39,9 +39,9 @@ from pet_eyes import EyeFollow
 from pet_group import (PetGroup, PetVoice, FrameCacheView, MAX_PETS,
                        work_area, constrain_origin, place_window)
 
-from pet_paths import ROOT
+from pet_paths import ROOT, DATA_ROOT
 MANIFEST = ROOT / "assets" / "manifest.json"
-SETTINGS = ROOT / "pet_settings.json"
+SETTINGS = DATA_ROOT / "pet_settings.json"
 
 CHROMA = (255, 0, 255)
 CHROMA_HEX = "#ff00ff"
@@ -79,13 +79,20 @@ LAUGH_CLICKS = 10
 LAUGH_WINDOW_SEC = 3.0
 CHARGE_SEC = 1.5
 
-LOG_PATH = ROOT / "_preview" / "pet.log"
+LOG_PATH = DATA_ROOT / "_preview" / "pet.log"
 
 
 def load_settings() -> dict:
     """用户可调参数。没有文件就用默认值,并且写一份出来方便改。"""
     defaults = {"displayScale": DEFAULT_DISPLAY_SCALE, "fps": None,
                 "randomMinSec": 180, "randomMaxSec": 240}
+    packaged_defaults = ROOT / "pet_settings.json"
+    if SETTINGS != packaged_defaults and packaged_defaults.is_file():
+        try:
+            data = json.loads(packaged_defaults.read_text(encoding="utf-8"))
+            defaults.update({k: v for k, v in data.items() if v is not None})
+        except (OSError, ValueError, AttributeError):
+            pass
     if SETTINGS.exists():
         try:
             data = json.loads(SETTINGS.read_text(encoding="utf-8"))
@@ -94,6 +101,7 @@ def load_settings() -> dict:
             log(f"pet_settings.json 解析失败,用默认值: {e}")
     else:
         try:
+            SETTINGS.parent.mkdir(parents=True, exist_ok=True)
             SETTINGS.write_text(json.dumps(defaults, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             pass
@@ -738,8 +746,8 @@ class PetApp:
             geo = {"x": self.root.winfo_x(), "y": self.root.winfo_y(),
                    "w": self.win_w, "h": self.win_h, "scale": self.global_scale,
                    "screen": [self.root.winfo_screenwidth(), self.root.winfo_screenheight()]}
-            (ROOT / "_preview").mkdir(parents=True, exist_ok=True)
-            (ROOT / "_preview" / "pet_geometry.json").write_text(
+            (DATA_ROOT / "_preview").mkdir(parents=True, exist_ok=True)
+            (DATA_ROOT / "_preview" / "pet_geometry.json").write_text(
                 json.dumps(geo, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
             log(f"写几何信息失败: {e}")

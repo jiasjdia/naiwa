@@ -6,9 +6,9 @@
 
 ## 下载运行
 
-在 [Releases](https://github.com/jiasjdia/naiwa/releases/latest) 下载 `naiwa-v1.0.0-windows-x64.zip`，完整解压后双击 `naiwa.exe`。无需安装 Python。
+直接[下载 naiwa.exe](https://github.com/jiasjdia/naiwa/releases/latest/download/naiwa.exe)，下载完成后双击即可运行，无需解压或安装 Python。
 
-请将整个文件夹放在可写位置，保留 `_internal`、`assets`、`media` 和配置文件。适用于 Windows 10/11 x64。
+适用于 Windows 10/11 x64。所有运行库、动画、眼部素材和音频均已封装在这一个 EXE 中。
 
 ## 操作
 
@@ -46,8 +46,9 @@ python -m pip install -r requirements.txt
 python pet_app.py
 ```
 
-也可双击 `pet.pyw` 无控制台启动。`pet_settings.json` 保存大小；`media_map.json` 保存音量、起始偏移和音画缓冲补偿。
-运行日志位于 `_preview/pet.log`，实例元数据在 `.cache`。它们不会提交到仓库。
+也可双击 `pet.pyw` 无控制台启动。源码模式在项目目录保存设置和日志。
+发布的 EXE 在 `%LOCALAPPDATA%\naiwa` 保存大小、日志和实例信息；移动 EXE 或重启仍保留设置，不在下载目录生成文件。
+`media_map.json` 保存音量、起始偏移和音画缓冲补偿。
 
 ## 打包
 
@@ -60,14 +61,15 @@ python tools/build_release.py
 python tools/build_release.py --icon path/to/icon.ico
 ```
 
-输出为 `releases/naiwa-v1.0.0-windows-x64.zip` 和 `SHA256SUMS.txt`。
-构建脚本按清单收集素材，不递归复制工作目录；压缩包内附文件哈希清单。
+输出为 `releases/naiwa.exe` 和 `SHA256SUMS.txt`。
+构建脚本按清单收集素材，不递归复制工作目录；依赖许可和素材哈希清单均包含在 EXE 中。
 
 ## 验证
 
 ```powershell
 python tools/verify_app.py
 python tools/verify_app.py --gui
+python tools/smoke_release.py releases/naiwa.exe
 ```
 
 测试使用临时设置和静音音频替身；`--gui` 会短暂显示真实 Tk 窗口。

@@ -12,7 +12,8 @@ def main():
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
     checks = [["tools/run_pet.py", "check"], ["tools/test_behavior.py"],
-              ["tools/test_audio_backend.py"], ["tools/test_audio_gating.py"], ["tools/test_runtime.py"]]
+              ["tools/test_audio_backend.py"], ["tools/test_audio_gating.py"], ["tools/test_runtime.py"],
+              ["tools/test_paths.py"]]
     for name in ("test_jelly.py", "test_eyes.py", "test_group.py"):
         checks.append(["tools/" + name] + (["--gui"] if args.gui else []))
     if args.gui:

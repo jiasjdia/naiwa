@@ -1,4 +1,4 @@
-"""Build a portable Windows release using an explicit resource allowlist."""
+"""Build one self-contained Windows EXE with an explicit resource allowlist."""
 from __future__ import annotations
 
 import argparse
@@ -10,10 +10,9 @@ import shutil
 import subprocess
 import sys
 import wave
-import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 
 def resource_files():
@@ -64,47 +63,50 @@ def copy_licenses(destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--icon", type=Path, help="optional Windows .ico file")
-    parser.add_argument("--archive-only", action="store_true", help="repackage an existing executable build")
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("Build this Windows executable on Windows")
     resources = resource_files()
-    output = ROOT / "dist/naiwa"
-    command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--windowed",
-               "--name", "naiwa", "--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build"),
-               "--specpath", str(ROOT / "build"), "--paths", str(ROOT), "--noupx"]
-    for module in ("numpy", "imageio_ffmpeg", "matplotlib", "scipy", "IPython", "pytest", "pygame.tests", "PIL.ImageQt"):
-        command += ["--exclude-module", module]
+    staging = ROOT / "build/bundle-resources"
+    copy_licenses(staging / "licenses")
+    bundled = [(ROOT / p, p) for p in resources]
+    bundled += [(ROOT / name, Path(name)) for name in ("QUICKSTART.txt", "THIRD_PARTY_NOTICES.md")]
+    bundled += [(p, Path("licenses") / p.name) for p in sorted((staging / "licenses").glob("*.txt"))]
+    inventory = {relative.as_posix(): hashlib.sha256(source.read_bytes()).hexdigest()
+                 for source, relative in bundled}
+    inventory_file = staging / "RESOURCE_FILES.sha256.json"
+    inventory_file.write_text(json.dumps(inventory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    bundled.append((inventory_file, Path(inventory_file.name)))
+    excludes = ["numpy", "imageio_ffmpeg", "matplotlib", "scipy", "IPython", "pytest", "pygame.tests", "PIL.ImageQt"]
+    icon = None
     if args.icon:
         icon = args.icon.resolve(strict=True)
         if icon.suffix.lower() != ".ico":
             parser.error("Use a Windows .ico file")
-        command += ["--icon", str(icon)]
-    command.append(str(ROOT / "pet.pyw"))
-    if not args.archive_only:
-        subprocess.run(command, cwd=ROOT, check=True)
-    elif not (output / "naiwa.exe").is_file():
-        parser.error("Build the executable before using --archive-only")
-    for relative in resources:
-        target = output / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / relative, target)
-    for name in ("QUICKSTART.txt", "THIRD_PARTY_NOTICES.md"):
-        shutil.copy2(ROOT / name, output / name)
-    copy_licenses(output / "licenses")
-    inventory = {p.relative_to(output).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-                 for p in sorted(output.rglob("*")) if p.is_file() and p.name != "FILES.sha256.json"}
-    (output / "FILES.sha256.json").write_text(json.dumps(inventory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        icon = str(icon)
+    # Put the allowlist in a spec file: hundreds of --add-data switches exceed
+    # Windows' command-line length limit.
+    spec = ROOT / "build/specs/naiwa.spec"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    datas = [(str(source), relative.parent.as_posix()) for source, relative in bundled]
+    spec.write_text(
+        f"a = Analysis([{str(ROOT / 'pet.pyw')!r}], pathex=[{str(ROOT)!r}], "
+        f"binaries=[], datas={datas!r}, hiddenimports=[], hookspath=[], "
+        f"hooksconfig={{}}, runtime_hooks=[], excludes={excludes!r}, noarchive=False)\n"
+        "pyz = PYZ(a.pure)\n"
+        "exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='naiwa', "
+        "debug=False, bootloader_ignore_signals=False, strip=False, upx=False, "
+        f"console=False, icon={icon!r})\n", encoding="utf-8")
+    command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
+               "--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build/pyinstaller"), str(spec)]
+    subprocess.run(command, cwd=ROOT, check=True)
     releases = ROOT / "releases"
     releases.mkdir(exist_ok=True)
-    archive = releases / f"naiwa-v{VERSION}-windows-x64.zip"
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as package:
-        for path in sorted(output.rglob("*")):
-            if path.is_file():
-                package.write(path, path.relative_to(output.parent))
+    executable = releases / "naiwa.exe"
+    shutil.copy2(ROOT / "dist/naiwa.exe", executable)
     checksum = releases / "SHA256SUMS.txt"
-    checksum.write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n", encoding="utf-8")
-    print(f"Built {archive} ({archive.stat().st_size / 1024**2:.1f} MiB)")
+    checksum.write_text(f"{hashlib.sha256(executable.read_bytes()).hexdigest()}  {executable.name}\n", encoding="utf-8")
+    print(f"Built v{VERSION}: {executable} ({executable.stat().st_size / 1024**2:.1f} MiB)")
     return 0
 
 

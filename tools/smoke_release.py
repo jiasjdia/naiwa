@@ -1,4 +1,4 @@
-"""Extract and run the actual portable ZIP without using the build's Python."""
+"""Run the standalone EXE alone, with isolated user state and no Python on PATH."""
 from __future__ import annotations
 
 import argparse
@@ -6,18 +6,20 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
-import zipfile
+
+import psutil
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from pet_runtime import signal_instance
 
 
-def wait_for(predicate, seconds=12):
+def wait_for(predicate, seconds=25):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if predicate():
@@ -26,57 +28,90 @@ def wait_for(predicate, seconds=12):
     raise AssertionError("Timed out waiting for the packaged app")
 
 
+def embedded_files(executable):
+    from PyInstaller.archive.readers import CArchiveReader
+    archive = CArchiveReader(str(executable))
+    names = {name.replace("\\", "/"): name for name in archive.toc}
+    inventory = json.loads(archive.extract(names["RESOURCE_FILES.sha256.json"]))
+    for name, digest in inventory.items():
+        assert hashlib.sha256(archive.extract(names[name])).hexdigest() == digest, name
+    assert len([name for name in names if name.startswith("assets/laugh/") and name.endswith(".webp")]) == 432
+    assert not any("dance1/" in name or "dance2/" in name or "ffmpeg" in name.lower()
+                   or name.lower().endswith((".mp4", ".m4a")) for name in names)
+    return len(inventory)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("archive", type=Path)
+    parser.add_argument("executable", type=Path)
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="naiwa-打包验证-") as directory:
+    count = embedded_files(args.executable)
+    with tempfile.TemporaryDirectory(prefix="naiwa-单文件验证-") as directory:
         target = Path(directory)
-        with zipfile.ZipFile(args.archive) as archive:
-            archive.extractall(target)
-        bundle = target / "naiwa"
-        inventory = json.loads((bundle / "FILES.sha256.json").read_text(encoding="utf-8"))
-        for name, digest in inventory.items():
-            assert hashlib.sha256((bundle / name).read_bytes()).hexdigest() == digest, name
-        frames = list((bundle / "assets/laugh").glob("*.webp"))
-        assert len(frames) == 432
-        assert not (bundle / "assets/dance1").exists()
-        assert not (bundle / "assets/dance2").exists()
-        assert not list(bundle.rglob("*ffmpeg*"))
-        assert not list(bundle.rglob("*.mp4"))
-        assert not list(bundle.rglob("*.m4a"))
+        download = target / "下载"
+        moved = target / "移动后"
+        temporary = target / "临时解包"
+        for folder in (download, moved, temporary):
+            folder.mkdir()
+        executable = download / "naiwa.exe"
+        renamed = moved / "奶蛙桌宠.exe"
+        shutil.copy2(args.executable, executable)
+        shutil.copy2(args.executable, renamed)
+        state = target / "用户数据/naiwa"
         environment = dict(os.environ)
-        environment.pop("PYTHONHOME", None)
-        environment.pop("PYTHONPATH", None)
-        environment["PATH"] = str(Path(os.environ["SystemRoot"]) / "System32")
-        environment["SDL_AUDIODRIVER"] = "dummy"
-        process = subprocess.Popen([str(bundle / "naiwa.exe")], cwd=target, env=environment)
-        log = bundle / "_preview/pet.log"
+        for variable in ("PYTHONHOME", "PYTHONPATH", "NAIWA_DATA_DIR"):
+            environment.pop(variable, None)
+        environment.update(PATH=str(Path(os.environ["SystemRoot"]) / "System32"),
+                           SDL_AUDIODRIVER="dummy", LOCALAPPDATA=str(state.parent),
+                           TEMP=str(temporary), TMP=str(temporary))
+        log = state / "_preview/pet.log"
+        geometry = state / "_preview/pet_geometry.json"
+        metadata = state / ".cache/pet-instance.json"
+        settings = state / "pet_settings.json"
+        process = subprocess.Popen([str(executable)], cwd=target, env=environment)
         try:
             wait_for(lambda: log.exists() and "窗口已显示" in log.read_text(encoding="utf-8"))
             assert process.poll() is None
-            metadata = json.loads((bundle / ".cache/pet-instance.json").read_text(encoding="utf-8"))
-            assert metadata["pid"] == process.pid
-            geometry = json.loads((bundle / "_preview/pet_geometry.json").read_text(encoding="utf-8"))
-            assert geometry["w"] > 0 and geometry["h"] > 0
-            duplicate = subprocess.run([str(bundle / "naiwa.exe")], cwd=target, env=environment, timeout=10)
-            assert duplicate.returncode == 0
-            assert log.read_text(encoding="utf-8").count("窗口已显示") == 1
-            assert signal_instance("laugh", bundle)
+            identity = json.loads(metadata.read_text(encoding="utf-8"))
+            assert Path(identity["root"]) == state
+            worker = psutil.Process(identity["pid"])
+            assert Path(worker.exe()).resolve() == executable.resolve()
+            assert worker.pid == process.pid or worker.ppid() == process.pid
+            displayed = json.loads(geometry.read_text(encoding="utf-8"))
+            assert displayed["w"] > 0 and displayed["h"] > 0
+            for entry in (executable, renamed):
+                duplicate = subprocess.run([str(entry)], cwd=target, env=environment, timeout=25)
+                assert duplicate.returncode == 0
+                assert log.read_text(encoding="utf-8").count("窗口已显示") == 1
+            assert signal_instance("laugh", state)
             wait_for(lambda: "播放 捧腹大笑" in log.read_text(encoding="utf-8"))
             assert process.poll() is None
             text = log.read_text(encoding="utf-8")
             assert not any(word in text for word in ("Traceback", "Cannot preload", "Cannot play", "Audio device unavailable")), text
-            assert signal_instance("quit", bundle)
-            assert process.wait(timeout=8) == 0
-            assert not (bundle / ".cache/pet-instance.json").exists()
-            print(f"PASS: {len(inventory)} file hashes, 432 frames, frozen startup, Tk rendering, audio, single instance, graceful quit")
+            assert signal_instance("quit", state)
+            assert process.wait(timeout=15) == 0
+            assert not metadata.exists()
+            preferences = json.loads(settings.read_text(encoding="utf-8"))
+            preferences["displayScale"] = 0.8
+            settings.write_text(json.dumps(preferences), encoding="utf-8")
+            process = subprocess.Popen([str(renamed)], cwd=target, env=environment)
+            wait_for(lambda: log.read_text(encoding="utf-8").count("窗口已显示") == 2)
+            assert json.loads(geometry.read_text(encoding="utf-8"))["scale"] == 0.8
+            assert signal_instance("quit", state)
+            assert process.wait(timeout=15) == 0
+            assert sorted(p.name for p in download.iterdir()) == ["naiwa.exe"]
+            assert sorted(p.name for p in moved.iterdir()) == ["奶蛙桌宠.exe"]
+            wait_for(lambda: not list(temporary.glob("_MEI*")))
+            print(f"PASS: {count} embedded hashes, 432 frames, EXE alone, Tk rendering, audio, "
+                  "single instance across extraction/rename, persistent size after moving, clean shutdown")
         finally:
             if process.poll() is None:
-                signal_instance("quit", bundle)
+                signal_instance("quit", state)
                 try:
-                    process.wait(timeout=5)
+                    process.wait(timeout=8)
                 except subprocess.TimeoutExpired:
+                    for child in psutil.Process(process.pid).children(recursive=True):
+                        child.terminate()
                     process.terminate()
                     process.wait(timeout=5)
     return 0

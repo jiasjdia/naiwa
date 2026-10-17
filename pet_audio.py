@@ -9,7 +9,7 @@ import time
 import wave
 from pathlib import Path
 
-from pet_paths import ROOT
+from pet_paths import ROOT, DATA_ROOT
 RATE = 48000
 CHANNELS = 2
 SAMPLE_BYTES = 2
@@ -58,6 +58,7 @@ def cached_wav(source: Path, cache: Path) -> Path:
 class AudioPlayer:
     def __init__(self, root=ROOT, mixer=None):
         self.root = Path(root)
+        self.cache_root = DATA_ROOT if self.root == ROOT else self.root
         self.media = {}
         self.offset_ms = {}
         self.volume = 0.7
@@ -111,7 +112,7 @@ class AudioPlayer:
         key = (clip_id, offset)
         if key not in self.sounds:
             if clip_id not in self.pcm:
-                path = cached_wav(self.media[clip_id], self.root / ".cache" / "audio")
+                path = cached_wav(self.media[clip_id], self.cache_root / ".cache" / "audio")
                 with wave.open(str(path), "rb") as wav:
                     self.pcm[clip_id] = wav.readframes(wav.getnframes())
             start = round(offset * RATE / 1000) * CHANNELS * SAMPLE_BYTES

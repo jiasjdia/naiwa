@@ -12,7 +12,7 @@ import threading
 
 import psutil
 
-from pet_paths import ROOT
+from pet_paths import DATA_ROOT as ROOT
 ACTIONS = ("show", "quit", "laugh")
 
 

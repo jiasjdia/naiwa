@@ -1,8 +1,7 @@
-naiwa 奶蛙桌宠 v1.0.0 · Windows x64
+naiwa 奶蛙桌宠 v1.1.0 · Windows x64
 
-1. 将压缩包完整解压到一个可写文件夹。
-2. 双击 naiwa.exe 即可运行，不需要安装 Python。
-3. 请保留 naiwa.exe 旁的 _internal、assets、media 和 JSON 配置文件。
+1. 下载 naiwa.exe。
+2. 双击即可运行，不用解压、不用安装 Python，也不需要旁边附带其他文件。
 
 操作：
 单击身体：局部 Q 弹；长按约 1.5 秒后松开：蓄力回弹。
@@ -14,7 +13,7 @@ Ctrl+Alt+C / Ctrl+Alt+V：复制 / 在鼠标位置粘贴分身。
 Ctrl+Alt+1：全体大笑；Ctrl+Alt+Q：退出全部。
 
 当前版本仅包含已启用的捧腹大笑动作，不包含跳舞素材。
-大小设置保存在 pet_settings.json；运行日志在 _preview/pet.log。
+程序自动记住大小；移动 EXE 或重启仍保留设置。
 重复启动只显示当前桌宠群。重启后保留大小，分身不恢复。
 
 项目：https://github.com/jiasjdia/naiwa
