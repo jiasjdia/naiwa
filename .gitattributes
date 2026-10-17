@@ -1,0 +1,9 @@
+* text=auto
+*.py text eol=lf
+*.pyw text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.webp binary
+*.png binary
+*.wav binary
+licenses/*.txt -whitespace

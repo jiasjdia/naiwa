@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.build-venv/
+.cache/
+_preview/
+build/
+dist/
+releases/
+*.spec
+*.log
+*.err
