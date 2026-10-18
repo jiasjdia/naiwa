@@ -6,7 +6,9 @@
 
 ## 下载运行
 
-直接[下载 奶小蛙.exe](https://github.com/jiasjdia/naiwa/releases/latest/download/%E5%A5%B6%E5%B0%8F%E8%9B%99.exe)，下载完成后双击即可运行，无需解压或安装 Python。
+直接[下载奶小蛙](https://github.com/jiasjdia/naiwa/releases/latest/download/naixiaowa.exe)，下载完成后双击即可运行，无需解压或安装 Python。
+
+GitHub 会自动改写纯中文附件名，因此下载文件名为 `naixiaowa.exe`，可自行改为 `奶小蛙.exe`；应用名称和图标均为奶小蛙。
 
 适用于 Windows 10/11 x64。所有运行库、动画、眼部素材和音频均已封装在这一个 EXE 中。
 
