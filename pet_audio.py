@@ -7,6 +7,7 @@ import os
 import subprocess
 import time
 import wave
+from collections import OrderedDict
 from pathlib import Path
 
 from pet_paths import ROOT, DATA_ROOT
@@ -67,7 +68,7 @@ class AudioPlayer:
         self.mixer = mixer
         self.channel = None
         self.voice_channels = {}
-        self.sounds = {}
+        self.sounds = OrderedDict()
         self.pcm = {}
         self.last_play_latency_ms = None
         self.output_latency_ms = 0.0
@@ -98,8 +99,8 @@ class AudioPlayer:
                 from pygame import mixer
                 self.mixer = mixer
             self.mixer.init(frequency=RATE, size=-16, channels=CHANNELS, buffer=512, allowedchanges=0)
-            # Channel 0 is the shared performance; 1..20 are independent pet voices.
-            self.mixer.set_num_channels(21)
+            # Keep legacy channel 0; every pet (including broadcast) owns a voice.
+            self.mixer.set_num_channels(41)
             self.channel = self.mixer.Channel(0)
             self.channel.set_volume(self.volume)
             return True
@@ -108,18 +109,30 @@ class AudioPlayer:
             audio_log(f"Audio device unavailable; continuing silently: {error}")
             return False
 
-    def _sound(self, clip_id, offset):
-        key = (clip_id, offset)
+    def _sound(self, clip_id, offset, end_ms=None):
+        key = (clip_id, offset) if end_ms is None else (clip_id, offset, end_ms)
         if key not in self.sounds:
             if clip_id not in self.pcm:
                 path = cached_wav(self.media[clip_id], self.cache_root / ".cache" / "audio")
                 with wave.open(str(path), "rb") as wav:
                     self.pcm[clip_id] = wav.readframes(wav.getnframes())
             start = round(offset * RATE / 1000) * CHANNELS * SAMPLE_BYTES
-            samples = self.pcm[clip_id][start:]
+            pcm = self.pcm[clip_id]
+            if start >= len(pcm):
+                raise ValueError("startOffsetMs is past the end of the track")
+            end = len(pcm) if end_ms is None else round(end_ms * RATE / 1000) * CHANNELS * SAMPLE_BYTES
+            if end <= start:
+                raise ValueError("audio segment end must follow its start")
+            samples = pcm[start:end]
+            if end > len(pcm):
+                # Match the exact animation cycle even when the track is shorter.
+                samples += b"\0" * (end - len(pcm))
             if not samples:
                 raise ValueError("startOffsetMs is past the end of the track")
             self.sounds[key] = self.mixer.Sound(buffer=samples)
+            while len(self.sounds) > 64:
+                self.sounds.popitem(last=False)
+        self.sounds.move_to_end(key)
         return self.sounds[key]
 
     def prewarm(self, clip_id=None):
@@ -160,7 +173,7 @@ class AudioPlayer:
                 pass
         self.current = None
 
-    def play_voice(self, voice, clip_id, start_ms=None):
+    def play_voice(self, voice, clip_id, start_ms=None, *, end_ms=None, loops=0):
         self.stop_voice(voice)
         if not self.available(clip_id) or not self._initialize():
             return False
@@ -168,14 +181,18 @@ class AudioPlayer:
             entry = self.voice_channels.get(voice)
             if entry is None:
                 used = {index for index, _ in self.voice_channels.values()}
-                index = next(i for i in range(1, 21) if i not in used)
+                index = next(i for i in range(1, 41) if i not in used)
                 channel = self.mixer.Channel(index)
                 channel.set_volume(self.volume)
                 self.voice_channels[voice] = (index, channel)
             else:
                 _, channel = entry
-            offset = max(0, int(self.offset_ms.get(clip_id, 0) if start_ms is None else start_ms))
-            channel.play(self._sound(clip_id, offset))
+            offset = max(0, float(self.offset_ms.get(clip_id, 0) if start_ms is None else start_ms))
+            sound = self._sound(clip_id, offset, end_ms)
+            if loops:
+                channel.play(sound, loops=loops)
+            else:
+                channel.play(sound)
             return True
         except Exception as error:
             audio_log(f"Cannot play independent {clip_id}: {error}")

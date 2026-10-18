@@ -10,3 +10,4 @@ releases/
 *.spec
 *.log
 *.err
+reports/

@@ -55,7 +55,7 @@ def bare_group():
 
 
 class MaskPet:
-    def __init__(self, mask, x=0, y=0, scale=0.4):
+    def __init__(self, mask, x=0, y=0, scale=0.5):
         self.mask, self.x, self.y = mask, x, y
         self.global_scale = scale
         self.root = object()
@@ -87,11 +87,11 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(PetGroup.overlap(a, b), 30)
 
     def test_merge_sum_cap_identity_and_target_foot(self):
-        for scales, expected in (((0.4, 0.4), 0.8), ((0.8, 0.8), 1.2)):
+        for scales, expected in (((0.5, 0.5), 0.6), ((0.6, 0.6), 0.7), ((0.7, 0.7), 0.8)):
             for primary_index in (0, 1, 2):
                 with self.subTest(scales=scales, primary=primary_index):
                     group = bare_group()
-                    pets = [MaskPet(Image.new("L", (10, 10), 255), scale=s) for s in (*scales, 0.4)]
+                    pets = [MaskPet(Image.new("L", (10, 10), 255), scale=s) for s in (*scales, 0.5)]
                     pets[2].x = 200
                     group.pets, group.primary = pets[:], pets[primary_index]
                     source, target, untouched = pets
@@ -125,12 +125,12 @@ class GroupTests(unittest.TestCase):
         source, lower, upper = group.pets
         group.primary = lower
         self.assertTrue(group.try_merge(source))
-        self.assertEqual(upper.global_scale, 0.8)
-        self.assertEqual(lower.global_scale, 0.4)
+        self.assertEqual(upper.global_scale, 0.6)
+        self.assertEqual(lower.global_scale, 0.5)
         self.assertIs(group.primary, lower)
         self.assertEqual(len(group.pets), 2)
 
-    def test_broadcast_single_track_members_detach_and_local_voices_stay_independent(self):
+    def test_broadcast_independent_voices_stop_locally(self):
         group = bare_group()
         group.pets = [app_probe(), app_probe()]
         a, b = group.pets
@@ -138,18 +138,17 @@ class GroupTests(unittest.TestCase):
         for window in group.pets:
             window.group, window.audio = group, PetVoice(group, window)
         group.play_all("laugh")
-        group.audio.play.assert_called_once_with("laugh")
-        self.assertEqual(group.audio_members, {a, b})
+        group.audio.play.assert_not_called()
+        self.assertEqual(group.audio.play_voice.call_count, 2)
         self.assertEqual(a.last_tick, b.last_tick)
         self.assertEqual((a.acc, b.acc), (-170, -170))
         a._to_idle()
         group.audio.stop.assert_not_called()
-        self.assertEqual(group.audio_members, {b})
         a.play("laugh", with_audio=True)
-        group.audio.play_voice.assert_called_once_with(a, "laugh")
+        group.audio.play_voice.assert_called_with(a, "laugh")
         self.assertEqual((b.mode, b.cur_clip), ("playing", "laugh"))
         b._to_idle()
-        group.audio.stop.assert_called_once()
+        group.audio.stop.assert_not_called()
         a._to_idle()
         group.audio.stop_voice.assert_called_with(a)
 
@@ -241,13 +240,13 @@ class TkGroupTests(unittest.TestCase):
         source.draw()
         target.draw()
 
-    def test_menu_keyboard_copy_and_twenty_pet_limit_share_one_interpreter(self):
+    def test_menu_keyboard_copy_and_forty_pet_limit_share_one_interpreter(self):
         self.assertIsNone(self.group.paste())
         self.app.menu.invoke("复制分身")
         clone = self.group.pets[-1]
         self.assertIs(clone.root.tk, self.app.root.tk)
         self.assertIs(clone.root.tk, self.group.root.tk)
-        self.assertEqual((clone.global_scale, clone.mode, len(clone._clicks)), (0.4, "idle", 0))
+        self.assertEqual((clone.global_scale, clone.mode, len(clone._clicks)), (0.5, "idle", 0))
         self.assertIs(self.group.primary, self.app)
         self.audio.prewarm.assert_called_once()
         self.group.root.winfo_pointerxy = Mock(return_value=(500, 350))
@@ -264,7 +263,7 @@ class TkGroupTests(unittest.TestCase):
         source = self.group.pets[-2]
         self.assertTrue(self.group.try_merge(source))
         self.assertEqual(len(self.group.pets), MAX_PETS - 1)
-        self.assertEqual(self.group.paste().global_scale, 0.4)
+        self.assertEqual(self.group.paste().global_scale, 0.5)
         self.assertEqual(len(self.group.pets), MAX_PETS)
         # Creation never overwrites the saved primary size.
         self.assertEqual(json.loads(self.settings.read_text())["displayScale"], 0.8)
@@ -288,12 +287,16 @@ class TkGroupTests(unittest.TestCase):
         with patch.object(clone.menu, "tk_popup"):
             clone._on_right(event(clone))
         self.assertIs(self.group.primary, clone)
-        self.assertEqual(json.loads(self.settings.read_text())["displayScale"], 0.4)
+        self.assertEqual(json.loads(self.settings.read_text())["displayScale"], 0.5)
         clone.size_menu.invoke("变大  ＋")
-        self.assertEqual((clone.global_scale, self.app.global_scale), (0.5, 0.8))
+        self.assertEqual((clone.global_scale, self.app.global_scale), (0.6, 0.8))
         clone.menu.invoke("捧腹大笑")
+        self.assertEqual(self.app.mode, "idle")
+        self.assertEqual(clone.mode, "playing")
+        clone.menu.invoke("全部大笑")
         self.assertTrue(all(p.cur_clip == "laugh" and p.mode == "playing" for p in self.group.pets))
-        self.audio.play.assert_called_once_with("laugh")
+        self.audio.play.assert_not_called()
+        self.assertEqual(self.audio.play_voice.call_count, 3)
 
     def test_frames_and_eye_assets_shared_but_eye_state_and_current_photos_survive_eviction(self):
         a, b = self.clone(), self.clone()
@@ -310,18 +313,19 @@ class TkGroupTests(unittest.TestCase):
 
     def test_merge_preserves_target_foot_and_primary_identity_then_paste_still_works(self):
         target = self.clone()
-        target.set_scale(0.8)
+        self.app.set_scale(0.7)
+        target.set_scale(0.7)
         self.align(self.app, target)
         foot = target.foot_position()
         self.assertTrue(self.group.try_merge(self.app))
         self.assertIs(self.group.primary, target)
-        self.assertEqual(target.global_scale, 1.2)
+        self.assertEqual(target.global_scale, 0.8)
         self.assertLessEqual(max(abs(a - b) for a, b in zip(foot, target.foot_position())), 1)
         self.assertEqual(target._body.phase, "landing")
         self.assertTrue(self.app._closed)
         self.assertIsNone(self.app._tick_after)
-        self.assertEqual(json.loads(self.settings.read_text())["displayScale"], 1.2)
-        self.assertEqual(self.group.paste().global_scale, 0.4)
+        self.assertEqual(json.loads(self.settings.read_text())["displayScale"], 0.8)
+        self.assertEqual(self.group.paste().global_scale, 0.5)
 
     def test_real_drag_release_merges_only_once_and_interrupts_only_participants(self):
         source, target, spectator = self.clone(), self.clone(), self.clone()
@@ -329,7 +333,7 @@ class TkGroupTests(unittest.TestCase):
         place_window(source.root, 200, 300)
         place_window(spectator.root, 100, 50)
         self.group.play_all("laugh")
-        self.assertTrue(self.group.audio_members)
+        self.assertEqual(self.audio.play_voice.call_count, 4)
         ev = event(source)
         source._on_press(ev)
         moved = SimpleNamespace(x=ev.x, y=ev.y, x_root=ev.x_root + 300, y_root=ev.y_root)
@@ -338,9 +342,9 @@ class TkGroupTests(unittest.TestCase):
         self.assertEqual(source._body.phase, "pickup")
         source._on_release(moved)
         self.assertTrue(source._closed)
-        self.assertEqual(target.global_scale, 0.8)
+        self.assertEqual(target.global_scale, 0.6)
         self.assertEqual((spectator.mode, spectator.cur_clip), ("playing", "laugh"))
-        self.assertIn(spectator, self.group.audio_members)
+        self.assertTrue(spectator._action_audible)
         self.audio.stop.assert_not_called()
 
     def test_reunify_locks_interaction_returns_all_and_keeps_primary_size(self):
@@ -363,7 +367,7 @@ class TkGroupTests(unittest.TestCase):
         self.assertEqual(second.foot_position(), original_foot)
         self.assertEqual(second._body.phase, "landing")
         self.assertIsNone(first._tick_after)
-        self.assertEqual(self.group.paste().global_scale, 0.4)
+        self.assertEqual(self.group.paste().global_scale, 0.5)
 
     def test_exit_during_reunify_closes_all_and_restart_restores_only_primary_size(self):
         clone = self.clone()
@@ -399,6 +403,152 @@ class TkGroupTests(unittest.TestCase):
         box = clone.visible_box()
         self.assertLessEqual(clone.root.winfo_x() + box[2], 0)
         self.assertLessEqual(clone.root.winfo_y() + box[3], 0)
+
+    def save_scene(self, name):
+        from pet_group import work_area
+        left, top, right, bottom = work_area(self.app.foot_position())
+        scene = Image.new("RGBA", (right - left, bottom - top), "#e8eef5")
+        for window in self.group.pets:
+            clip = window.clips[window.cur_clip]
+            frame = window._read_rgba(window.cur_clip, window.cur_index)
+            scene.alpha_composite(frame, (window.root.winfo_x() + clip.fx - left,
+                                          window.root.winfo_y() + clip.fy - top))
+        (ROOT / "reports").mkdir(exist_ok=True)
+        scene.convert("RGB").save(ROOT / "reports" / name)
+
+    def test_emitted_phase_recursive_clicks_drag_pin_and_stop_scope(self):
+        self.app.set_scale(0.8)
+        place_window(self.app.root, 600, 300)
+        self.app.play("laugh", with_audio=True)
+        self.app.tick()
+        with patch("pet_group.burst_scales", return_value=[0.7, 0.6, 0.5]):
+            for _ in range(8):
+                click(self.app)
+        self.assertEqual(len(self.group.pending_bursts), 3)
+        self.pump(0.45)
+        self.assertEqual(len(self.group.pets), 4)
+        self.assertEqual(len(self.group.pending_bursts), 0)
+        children = self.group.pets[1:]
+        for child in children:
+            self.assertTrue(self.group.physics.is_dynamic(child))
+            self.assertGreaterEqual(child.cur_index, 53)
+            self.assertEqual(child._loop_start, 53)
+        self.save_scene("split_in_flight.png")
+        child = children[0]
+        # Dragging pins the body but must not stop its perpetual laugh or voice.
+        ev = event(child)
+        child._on_press(ev)
+        moved = SimpleNamespace(x=ev.x, y=ev.y,
+                                x_root=ev.x_root + 100 - child.root.winfo_x(),
+                                y_root=ev.y_root + 100 - child.root.winfo_y())
+        stops = self.audio.stop_voice.call_count
+        child._on_motion(moved)
+        child._on_release(moved)
+        self.assertEqual(child.mode, "playing")
+        self.assertEqual(child._loop_start, 53)
+        self.assertEqual(self.audio.stop_voice.call_count, stops)
+        self.assertFalse(self.group.physics.is_dynamic(child))
+        for _ in range(8):
+            click(child)
+        self.assertGreater(len(self.group.pending_bursts), 0)
+        self.app.menu.invoke("停止大笑")
+        self.assertEqual(self.app.mode, "idle")
+        self.assertTrue(all(c.mode == "playing" for c in children))
+        self.assertTrue(all(entry[1] is child for entry in self.group.pending_bursts))
+        self.pump(0.4)
+        self.assertGreater(len(self.group.pets), 4)
+        self.app.menu.invoke("停止全部大笑")
+        self.assertTrue(all(c.mode == "idle" for c in self.group.pets))
+        self.assertFalse(self.group.physics.is_dynamic(child))
+        place_window(child.root, 300, 200)
+        ev = event(child)
+        child._on_press(ev)
+        moved = SimpleNamespace(x=ev.x, y=ev.y, x_root=ev.x_root - 50, y_root=ev.y_root - 70)
+        child._on_motion(moved)
+        child._on_release(moved)
+        self.assertFalse(self.group.physics.is_dynamic(child))
+        position = child.root.winfo_x(), child.root.winfo_y()
+        self.pump(0.15)
+        self.assertEqual(position, (child.root.winfo_x(), child.root.winfo_y()))
+        # A command interrupting a held drag must restore its fixed obstacle too.
+        child._drop_jelly()
+        ev = event(child)
+        child._on_press(ev)
+        moved.x_root, moved.y_root = ev.x_root - 20, ev.y_root - 20
+        child._on_motion(moved)
+        self.assertNotIn(child, self.group.physics.particles)
+        child.play("laugh")
+        self.assertIn(child, self.group.physics.particles)
+        self.assertFalse(self.group.physics.is_dynamic(child))
+        self.group.reunify()
+        self.pump(REUNIFY_SEC + 0.1)
+        self.assertEqual(len(self.group.physics.particles), 1)
+        self.assertEqual(self.group.pending_bursts, [])
+
+    def test_forty_emitted_windows_and_exit_clear_world_and_queue(self):
+        samples = []
+        advance = self.group.physics.advance
+        def measured_advance(elapsed):
+            began = time.perf_counter()
+            advance(elapsed)
+            samples.append((elapsed, time.perf_counter() - began))
+        self.group.physics.advance = measured_advance
+        self.app.set_scale(0.8)
+        place_window(self.app.root, 600, 250)
+        self.app.play("laugh", with_audio=True)
+        self.app.tick()
+        with patch("pet_group.burst_scales", return_value=[0.5] * 4):
+            while len(self.group.pets) + len(self.group.pending_bursts) < MAX_PETS:
+                self.assertGreater(self.group.request_split(self.app), 0)
+            self.assertEqual(self.group.request_split(self.app), 0)
+        self.pump(1.5)
+        self.assertEqual(len(self.group.pets), 40)
+        self.assertEqual(len(self.group.physics.particles), 40)
+        self.assertEqual(self.group.pending_bursts, [])
+        self.assertEqual(self.audio.play_voice.call_count, 40)
+        self.pump(2.5)
+        (ROOT / "reports" / "split_timing.json").write_text(json.dumps({
+            "ticks": len(samples), "elapsedSeconds": sum(s[0] for s in samples),
+            "maxTickInterval": max(s[0] for s in samples),
+            "physicsCostSeconds": sum(s[1] for s in samples),
+            "positionsY": [e.body.position.y for e in self.group.physics.particles.values()],
+        }, indent=2), encoding="utf-8")
+        self.save_scene("split_forty.png")
+        for window, entry in self.group.physics.particles.items():
+            if self.group.physics.is_dynamic(window):
+                x, y = entry.body.position.x - entry.offset[0], entry.body.position.y - entry.offset[1]
+                self.assertAlmostEqual(window.root.winfo_x(), x, delta=2)
+                self.assertAlmostEqual(window.root.winfo_y(), y, delta=2)
+        self.group.quit()
+        self.assertEqual(self.group.physics.particles, {})
+        self.assertEqual(self.group.pending_bursts, [])
+        self.assertIsNone(self.group._physics_after)
+        self.assertIsNone(self.group._physics_timer)
+
+    def test_merge_and_reunify_preserve_retained_emitted_loop(self):
+        self.app.play("laugh", with_audio=True)
+        target = self.group.spawn(source=self.app, scale=0.7, emitted=True)
+        place_window(target.root, 500, 300)
+        source = self.clone()
+        source.set_scale(0.7)
+        self.align(source, target)
+        began = target._action_start
+        stopped_before = sum(call.args == (target,) for call in self.audio.stop_voice.call_args_list)
+        self.assertTrue(self.group.try_merge(source))
+        self.assertEqual(target.global_scale, 0.8)
+        self.assertEqual(target.mode, "playing")
+        self.assertEqual(target._action_start, began)
+        self.assertEqual(target._loop_start, 53)
+        self.group.set_primary(target)
+        self.group.reunify()
+        self.pump(REUNIFY_SEC + 0.1)
+        self.assertEqual(self.group.pets, [target])
+        self.assertEqual(target.mode, "playing")
+        self.assertEqual(target._action_start, began)
+        stopped_after = sum(call.args == (target,) for call in self.audio.stop_voice.call_args_list)
+        self.assertEqual(stopped_before, stopped_after)
+        target.menu.invoke("停止大笑")
+        self.assertEqual(target.mode, "idle")
 
 
 if __name__ == "__main__":

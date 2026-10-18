@@ -54,6 +54,11 @@ def app_probe(scale=0.4):
     app._press_local = (0, 0)
     app._clicks = deque(maxlen=pet.LAUGH_CLICKS)
     app._click_laugh_active = False
+    app.global_scale = scale
+    app._split_clicks = deque(maxlen=pet.SPLIT_CLICKS)
+    app._action_start = None
+    app._action_serial = 0
+    app._action_audible = False
     app._body = None
     app._idle_remaining = None
     app._drag_body_eligible = app._press_idle = False
@@ -441,10 +446,13 @@ class InteractionTests(_InteractionSetup):
         self.assertIsNone(app._jelly.held)
         self.assertEqual(app._body.phase, "landing")
 
-    def test_playing_click_only_interrupts_then_next_click_bounces(self):
+    def test_playing_click_keeps_action_until_explicit_stop(self):
         app = app_probe()
         app.play("laugh", with_audio=True)
         click(app)
+        self.assertEqual(app.mode, "playing")
+        app.audio.stop.assert_not_called()
+        app._to_idle()
         self.assertEqual(app.mode, "idle")
         self.assertIsNone(app._jelly)
         app.audio.stop.assert_called_once()
@@ -630,14 +638,14 @@ class ClickLaughTests(_InteractionSetup):
         self.assertEqual(app._body.phase, "landing")
         app.audio.stop.assert_called_once()
 
-    def test_manual_action_removes_protection_and_click_interrupts(self):
+    def test_manual_action_is_also_protected_from_click_stop(self):
         app = app_probe()
         self.trigger(app)
         app.play("laugh", with_audio=True)
         self.assertFalse(app._click_laugh_active)
         click(app)
-        self.assertEqual(app.mode, "idle")
-        app.audio.stop.assert_called_once()
+        self.assertEqual(app.mode, "playing")
+        app.audio.stop.assert_not_called()
 
     def test_menu_and_action_changes_clear_partial_count(self):
         app = app_probe()
@@ -657,7 +665,7 @@ class ClickLaughTests(_InteractionSetup):
     def test_finishing_laugh_requires_ten_new_clicks(self):
         app = app_probe()
         self.trigger(app)
-        app.cur_index = app.clips["laugh"].frames - 1
+        app._action_start = 13 - app.clips["laugh"].frames * app.frame_ms / 1000
         with patch("pet_app.time.monotonic", return_value=13):
             app.tick()
         self.assertEqual(app.mode, "idle")
@@ -991,7 +999,7 @@ class TkTests(unittest.TestCase):
 
         app.draw = record
         app.tick()
-        for scale in (0.4, 1.2):
+        for scale in (pet.SCALE_MIN, pet.SCALE_MAX):
             app.set_scale(scale)
             draws.clear()
             costs.clear()
@@ -1043,8 +1051,7 @@ class TkTests(unittest.TestCase):
 
     def test_real_drop_cadence_grip_foot_mask_cache_and_resize_cleanup(self):
         app = self.app
-        # Synthetic dragging does not capture native mouse focus. Keep this
-        # rendering test isolated from desktop focus; separate tests cover blur.
+        # Synthetic dragging has no native mouse capture; focus is tested separately.
         focus = patch.object(app.root, "focus_get", return_value=app.root)
         focus.start()
         self.addCleanup(focus.stop)
@@ -1085,7 +1092,7 @@ class TkTests(unittest.TestCase):
 
         app.draw = record
         app.tick()
-        for scale in (0.4, 1.2):
+        for scale in (pet.SCALE_MIN, pet.SCALE_MAX):
             app.set_scale(scale)
             app.root.update()
             records.clear()

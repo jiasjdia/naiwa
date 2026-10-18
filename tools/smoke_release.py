@@ -38,6 +38,32 @@ def embedded_files(executable):
     assert len([name for name in names if name.startswith("assets/laugh/") and name.endswith(".webp")]) == 432
     assert not any("dance1/" in name or "dance2/" in name or "ffmpeg" in name.lower()
                    or name.lower().endswith((".mp4", ".m4a")) for name in names)
+    assert any("_chipmunk" in name and name.endswith(".pyd") for name in names)
+    assert any("_cffi_backend" in name and name.endswith(".pyd") for name in names)
+    assert "pet_physics" in archive.open_embedded_archive("PYZ.pyz").toc
+    # Verify that Explorer's compiled icon really matches the supplied ICO.
+    import pefile
+    import struct
+    data = (ROOT / "assets/app.ico").read_bytes()
+    count = struct.unpack_from("<H", data, 4)[0]
+    expected = set()
+    for index in range(count):
+        size, offset = struct.unpack_from("<II", data, 6 + index * 16 + 8)
+        expected.add(hashlib.sha256(data[offset:offset + size]).digest())
+    with pefile.PE(str(executable)) as pe:
+        properties = {key: value for tables in pe.FileInfo for table in tables
+                      if hasattr(table, "StringTable") for strings in table.StringTable
+                      for key, value in strings.entries.items()}
+        assert properties[b"ProductName"].decode("utf-8") == "奶小蛙"
+        assert properties[b"OriginalFilename"].decode("utf-8") == "奶小蛙.exe"
+        actual = set()
+        for resource in pe.DIRECTORY_ENTRY_RESOURCE.entries:
+            if resource.id == pefile.RESOURCE_TYPE["RT_ICON"]:
+                for icon in resource.directory.entries:
+                    for language in icon.directory.entries:
+                        entry = language.data.struct
+                        actual.add(hashlib.sha256(pe.get_data(entry.OffsetToData, entry.Size)).digest())
+        assert expected <= actual, "Compiled EXE icon does not match assets/app.ico"
     return len(inventory)
 
 
@@ -53,8 +79,8 @@ def main():
         temporary = target / "临时解包"
         for folder in (download, moved, temporary):
             folder.mkdir()
-        executable = download / "naiwa.exe"
-        renamed = moved / "奶蛙桌宠.exe"
+        executable = download / "奶小蛙.exe"
+        renamed = moved / "移动后的奶小蛙.exe"
         shutil.copy2(args.executable, executable)
         shutil.copy2(args.executable, renamed)
         state = target / "用户数据/naiwa"
@@ -99,11 +125,16 @@ def main():
             assert json.loads(geometry.read_text(encoding="utf-8"))["scale"] == 0.8
             assert signal_instance("quit", state)
             assert process.wait(timeout=15) == 0
-            assert sorted(p.name for p in download.iterdir()) == ["naiwa.exe"]
-            assert sorted(p.name for p in moved.iterdir()) == ["奶蛙桌宠.exe"]
+            assert sorted(p.name for p in download.iterdir()) == ["奶小蛙.exe"]
+            assert sorted(p.name for p in moved.iterdir()) == ["移动后的奶小蛙.exe"]
             wait_for(lambda: not list(temporary.glob("_MEI*")))
-            print(f"PASS: {count} embedded hashes, 432 frames, EXE alone, Tk rendering, audio, "
+            print(f"PASS: {count} embedded hashes, custom Windows icon, 432 frames, EXE alone, "
+                  "Tk rendering, native physics engine, audio, "
                   "single instance across extraction/rename, persistent size after moving, clean shutdown")
+        except Exception:
+            if log.exists():
+                print(log.read_text(encoding="utf-8"), flush=True)
+            raise
         finally:
             if process.poll() is None:
                 signal_instance("quit", state)

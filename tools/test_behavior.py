@@ -40,6 +40,7 @@ class BehaviorTests(unittest.TestCase):
             app.audio.play.assert_called_once_with(cid)
             seen = set()
             now = app.last_tick
+            began = now
             with patch("pet_app.log"), patch("pet_app.time.monotonic", side_effect=lambda: now):
                 while app.mode == "playing":
                     seen.add(app.cur_index)
@@ -48,7 +49,7 @@ class BehaviorTests(unittest.TestCase):
             self.assertEqual(len(seen), app.clips[cid].frames)
             self.assertEqual((app.cur_clip, app.cur_index), (app.idle_clip, app.idle_frame))
             expected = app.clips[cid].frames / 30
-            self.assertAlmostEqual(now - 10, expected, delta=0.02)
+            self.assertAlmostEqual(now - began, expected, delta=0.02)
             self.assertGreaterEqual(app.deadline - now, 180)
             self.assertLessEqual(app.deadline - now, 240)
 

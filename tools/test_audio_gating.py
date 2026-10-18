@@ -56,8 +56,8 @@ class Probe(pet_app.PetApp):
 play_impl = pet_app.PetApp.play
 
 CLIPS = {"laugh": type("C", (), {"label": "大笑"})(),
-         "dance1": type("C", (), {"label": "跳舞1"})(),
-         "dance2": type("C", (), {"label": "跳舞2"})()}
+         "laugh": type("C", (), {"label": "跳舞1"})(),
+         "laugh": type("C", (), {"label": "跳舞2"})()}
 
 results: list[tuple[str, bool, str]] = []
 
@@ -76,15 +76,15 @@ def check(label: str, cond: bool, detail: str = "") -> None:
 
 print(__doc__)
 print("== 1. 手动点选动作:必须出声 ==")
-p = case("manual", manual=True, clip="dance2")
-check("手动调用 audio.play(动作)", ("play", "dance2") in p.audio.calls, str(p.audio.calls))
+p = case("manual", manual=True, clip="laugh")
+check("手动调用 audio.play(动作)", ("play", "laugh") in p.audio.calls, str(p.audio.calls))
 check("手动调用不再额外 stop", ("stop", "") not in p.audio.calls, str(p.audio.calls))
 check("动作从第 1 帧开始", p.cur_index == 0, f"cur_index={p.cur_index}")
 check("进入 playing 状态", p.mode == "playing", p.mode)
 check("有重绘", p.drew == 1, f"drew={p.drew}")
 
 print("\n== 2. 自动随机动作:必须静音 ==")
-p = case("auto", manual=False, clip="dance1")
+p = case("auto", manual=False, clip="laugh")
 check("自动调用不碰 audio.play", not any(c[0] == "play" for c in p.audio.calls), str(p.audio.calls))
 check("自动调用会 stop(掐掉上一段余音)", ("stop", "") in p.audio.calls, str(p.audio.calls))
 check("动作照常从第 1 帧开始", p.cur_index == 0, f"cur_index={p.cur_index}")
@@ -113,7 +113,7 @@ rand_win = window("self.play(pick)")
 check("菜单传 with_audio=True", "with_audio=True" in menu_win, repr(menu_win))
 check("键盘快捷键传 with_audio=True", "with_audio=True" in key_win, repr(key_win))
 check("随机动作用默认(静音)", bool(rand_win) and "with_audio" not in rand_win, repr(rand_win))
-check("play() 的默认值是静音", "def play(self, clip_id: str, with_audio: bool = False)" in src)
+check("play() 的默认值是静音", "def play(self, clip_id: str, with_audio: bool = False," in src)
 
 # Replay, seek offsets, and channel replacement are exercised in test_audio_backend.py.
 
@@ -201,13 +201,13 @@ now = _time.monotonic()
 
 p = ClickProbe(mode="playing", deadline=now + 999)
 click(p)
-check("演动作时单击 -> 回待机", p.mode == "idle", p.mode)
-check("演动作时单击 -> 切回待机动作", p.cur_clip == "laugh" and p.cur_index == 0,
+check("演动作时单击 -> 保持播放", p.mode == "playing", p.mode)
+check("演动作时单击 -> 不重置进度", p.cur_clip == "laugh" and p.cur_index == 42,
       f"{p.cur_clip}#{p.cur_index}")
-check("演动作时单击 -> 停掉音频", ("stop", "") in p.audio.calls, str(p.audio.calls))
-check("演动作时单击 -> 重绘待机帧", p.drew == 1, f"drew={p.drew}")
-check("演动作时单击 -> 重新排随机倒计时",
-      abs(p.deadline - now - 180) < 61 and p.deadline > now,
+check("演动作时单击 -> 音频继续", ("stop", "") not in p.audio.calls, str(p.audio.calls))
+check("演动作时单击 -> 不重绘待机帧", p.drew == 0, f"drew={p.drew}")
+check("演动作时单击 -> 不重置随机倒计时",
+      p.deadline == now + 999,
       f"deadline-now={p.deadline - now:.0f}s")
 check("演动作时单击 -> 没有额外播放音频",
       not any(c[0] == "play" for c in p.audio.calls), str(p.audio.calls))
@@ -235,7 +235,7 @@ check("拖动后松开 -> 不触发戳肚子", p3._poked == 0, f"poke={p3._poked
 # 源码层:两条回待机的路必须走同一份实现(否则容易只改一处)
 src2 = (ROOT / "pet_app.py").read_text(encoding="utf-8")
 check("动作播完 = 调 _to_idle()", "self._to_idle()" in src2)
-check("单击中断也调 _to_idle()", "self._to_idle()" in src2 and "单击中断" in src2)
+check("提供显式停止大笑入口", "def stop_laugh(self)" in src2)
 
 failed = [r for r in results if not r[1]]
 print(f"\n== 结果 ==\n通过 {len(results) - len(failed)} 项,失败 {len(failed)} 项")

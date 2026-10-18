@@ -17,14 +17,14 @@ sys.path.insert(0, str(ROOT))
 def diagnose():
     failures = []
     print("Python:", sys.version.split()[0], sys.executable)
-    for module in ("tkinter", "PIL", "pygame.mixer", "psutil"):
+    for module in ("tkinter", "PIL", "pygame.mixer", "psutil", "pymunk"):
         try:
             importlib.import_module(module)
             print("OK", module)
         except ImportError as error:
             failures.append(str(error))
             print("FAIL", module, error)
-    for relative in ("pet_app.py", "pet_group.py", "pet_audio.py", "pet_eyes.py", "pet_runtime.py",
+    for relative in ("pet_app.py", "pet_group.py", "pet_audio.py", "pet_eyes.py", "pet_runtime.py", "pet_physics.py",
                      "assets/manifest.json", "media_map.json", "assets/eyes/backing.png",
                      "assets/eyes/pupil.png", "assets/eyes/geometry.json"):
         present = (ROOT / relative).is_file()

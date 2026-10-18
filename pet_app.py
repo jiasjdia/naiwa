@@ -11,9 +11,9 @@ eye tracking, and audio are controlled by this one Python implementation.
   * 待机时全身可按压,1.5秒蓄满后松手局部Q弹;移动>=4px转拖动
   * 待机时拎起略微拉长,松手后脚底原地固定、全身压扁回弹约0.9秒
   * 滚动3秒内有效点击10次,触发完整有声大笑;继续轻点不会掐掉笑声
-  * 正在演动作时单击回待机;拖起中断本只动作并进入拎起形变
-  * 右键任一只设为本体,菜单动作全体执行,大小只作用于本体
-  * 复制产生0.4分身(最多20只),松手身体重叠合体,归一收回分身
+  * 大笑中2秒点击8次喷出更小分身,弹跳碰撞并堆积,拖过后悬停
+  * 右键任一只设为本体,单只/全体大笑与停止分开,大小只作用于本体
+  * 四档0.8/0.7/0.6/0.5,最多40只,同档合体升级,归一收回分身
   * 交互触发动作(右键菜单 / 键盘 1、2、3 / 连点身体)播放音频
   * 空闲 180~240 秒随机演一个动作(**只做动作,不出声**)
   * 点洋红(透明)处:鼠标穿透给桌面(由 Windows 抠色自动完成,这里只需不响应)
@@ -38,6 +38,7 @@ from pet_audio import AudioPlayer
 from pet_eyes import EyeFollow
 from pet_group import (PetGroup, PetVoice, FrameCacheView, MAX_PETS,
                        work_area, constrain_origin, place_window)
+from pet_physics import TIERS, snap_scale, tier_of
 
 from pet_paths import ROOT, DATA_ROOT
 MANIFEST = ROOT / "assets" / "manifest.json"
@@ -63,9 +64,8 @@ FRAME_CACHE_BYTES = 220 * 1024 * 1024   # 帧位图内存上限(超出丢最久�
 # 想调大小就改它:0.2091 是"宠物 280px",乘 0.5 就是 140px。
 DEFAULT_DISPLAY_SCALE = None    # None = 用 manifest.globalScale
 
-# 右键菜单「大小」里的预设档位。1.0 是素材设计尺寸(帧 1:1 贴图,最清晰),
-# 往上放大会开始发虚,所以上限只到 1.2;下限 0.4 再小就看不清动作了。
-SCALE_PRESETS = (0.4, 0.6, 0.8, 1.0, 1.2)
+# 大小从四档0.5到一档0.8;历史自由尺寸会就近归档。
+SCALE_PRESETS = tuple(reversed(TIERS))
 SCALE_MIN = min(SCALE_PRESETS)
 SCALE_MAX = max(SCALE_PRESETS)
 # 「变小/变大」微调一档的步长(和预设档位对齐,方便微调后正好落到某个预设上)
@@ -77,6 +77,9 @@ BODY_PAD = 32                    # 素材基准像素;只增加透明余量,不�
 BODY_LAND_SEC = 0.90
 LAUGH_CLICKS = 10
 LAUGH_WINDOW_SEC = 3.0
+SPLIT_CLICKS = 8
+SPLIT_WINDOW_SEC = 2.0
+EMITTED_LOOP_FIRST_FRAME = 54  # Human-facing, inclusive; internal indices are zero-based.
 CHARGE_SEC = 1.5
 
 LOG_PATH = DATA_ROOT / "_preview" / "pet.log"
@@ -535,7 +538,7 @@ class PetApp:
         # 用别的值会让窗口和帧文件对不上(帧要么被放大发虚,要么被缩小浪费)。
         gs = self.settings.get("displayScale")
         initial_scale = scale if scale is not None else gs or m.get("globalScale") or 1.0
-        self.global_scale = max(SCALE_MIN, min(SCALE_MAX, float(initial_scale)))
+        self.global_scale = snap_scale(initial_scale)
         # 角色内容尺寸 = 素材给的"窗口显示尺寸" × displayScale;窗口另加透明边距。
         # 素材已经保证"三个动作的帧文件一样大、且第一帧身体在帧内的位置完全相同",
         # 所以三个动作始终使用同样的透明边距和内容原点,切换时锚点重合。
@@ -574,6 +577,12 @@ class PetApp:
         self._press_local = (0, 0)
         self._clicks = deque(maxlen=LAUGH_CLICKS)
         self._click_laugh_active = False
+        self._split_clicks = deque(maxlen=SPLIT_CLICKS)
+        self._action_start = None
+        self._action_serial = 0
+        self._action_audible = False
+        self._emitted = False
+        self._loop_start = None
         self._press_idle = False
         self._drag_body_eligible = False
         self._drag_samples = deque(maxlen=128)
@@ -631,7 +640,10 @@ class PetApp:
     # ------------------------------------------------------------------ 窗口
     def _build_window(self) -> None:
         self.root = tk.Toplevel(self.group.root)
-        self.root.title("桌宠")
+        self.root.title("奶小蛙")
+        icon = ROOT / "assets/app.ico"
+        if icon.is_file():
+            self.group.root.iconbitmap(default=str(icon))
         self.root.overrideredirect(True)                  # 无边框
         self.root.attributes("-topmost", True)            # 置顶
         try:
@@ -652,7 +664,10 @@ class PetApp:
         self.menu = tk.Menu(self.root, tearoff=0)
         for cid in self.order:
             self.menu.add_command(label=self.clips[cid].label,
-                                  command=lambda c=cid: self.play_all(c, with_audio=True))
+                                  command=lambda c=cid: self.play(c, with_audio=True))
+        self.menu.add_command(label="全部大笑", command=lambda: self.play_all("laugh", with_audio=True))
+        self.menu.add_command(label="停止大笑", command=self.stop_laugh)
+        self.menu.add_command(label="停止全部大笑", command=self.group.stop_all_laughs)
         self.menu.add_separator()
         self.menu.add_command(label="复制分身", command=lambda: self.group.duplicate(self))
         self.menu.add_command(label="归一", command=self.group.reunify)
@@ -669,7 +684,7 @@ class PetApp:
         for i, s in enumerate(SCALE_PRESETS):
             h = int(round(self.base_h * s))
             self.size_menu.add_radiobutton(
-                label=f"{s:.1f}   （{h}px 高）", value=i,
+                label=f"{tier_of(s)}档  {s:.1f}   （{h}px 高）", value=i,
                 variable=self.scale_var, command=lambda i=i: self.group.primary.set_scale(SCALE_PRESETS[i]))
         self.menu.add_cascade(label="大小", menu=self.size_menu)
 
@@ -760,11 +775,15 @@ class PetApp:
         """
         if getattr(self, "group", None) is not None and self.group.reunifying:
             return
-        scale = max(SCALE_MIN, min(SCALE_MAX, float(scale)))
+        scale = snap_scale(scale)
         if abs(scale - self.global_scale) < 1e-9:
             return
         anchor = self.foot_position() if anchor is None else anchor
         self._drop_jelly()
+        if getattr(self, "group", None) is not None:
+            self.group.cancel_emission(self)
+        if hasattr(self, "_split_clicks"):
+            self._split_clicks.clear()
         old = self.global_scale
         self.global_scale = scale
 
@@ -797,6 +816,8 @@ class PetApp:
         self._save_scale(scale)
         self.draw()
         self._write_geometry_file()
+        if getattr(self, "group", None) is not None:
+            self.group.resize_physics(self)
 
     def _save_scale(self, scale: float) -> None:
         """把新尺寸写回 pet_settings.json(保留文件里其他键,不乱格式化)。"""
@@ -977,6 +998,18 @@ class PetApp:
         self._resume_idle(now)
         self._wake_animation(now)
 
+    def _complete_split_click(self, now):
+        if not hasattr(self, "_split_clicks"):
+            self._split_clicks = deque(maxlen=SPLIT_CLICKS)
+        while self._split_clicks and now - self._split_clicks[0] > SPLIT_WINDOW_SEC:
+            self._split_clicks.popleft()
+        self._split_clicks.append(now)
+        if len(self._split_clicks) == SPLIT_CLICKS:
+            self._split_clicks.clear()
+            group = getattr(self, "group", None)
+            if group is not None:
+                group.request_split(self, now)
+
     def _wake_animation(self, now: float) -> None:
         self._jelly_next_frame = now
         if self._jelly_timer is None:
@@ -1031,6 +1064,7 @@ class PetApp:
 
     def _drop_jelly(self) -> None:
         """切动作/拖动/菜单/缩放时复位;也取消跨状态的按下候选。"""
+        was_drag = getattr(self, "dragging", False) and getattr(self, "drag_moved", False)
         timer = getattr(self, "_jelly_timer", None)
         if timer is not None:
             timer.timeEndPeriod(1)
@@ -1044,6 +1078,10 @@ class PetApp:
         if getattr(self, "_clicks", None) is not None:
             self._clicks.clear()
         self._finish_body()
+        group = getattr(self, "group", None)
+        if (was_drag and not getattr(self, "_closed", False) and group is not None
+                and not group.closed and not group.reunifying):
+            group.set_hover(self)
 
     # ------------------------------------------------------------------ 逻辑
     def play_all(self, clip_id: str, with_audio: bool = True) -> None:
@@ -1073,8 +1111,8 @@ class PetApp:
         self._pause_idle(now)
         self._wake_animation(now)
 
-    def play(self, clip_id: str, with_audio: bool = False) -> None:
-        """播放动作第 1 帧起的一整遍(打断当前动作)。
+    def play(self, clip_id: str, with_audio: bool = False, *, started_at=None) -> None:
+        """普通桌宠完整播放;喷射分身从第54帧开始无限循环大笑。
 
         with_audio 只有**交互触发**才为 True(右键菜单、键盘 1、连续点击身体):
           自动随机动作是"宠物自己演的",不出声才不会在旁边说话/看视频时突然响一下。
@@ -1082,25 +1120,77 @@ class PetApp:
         """
         if clip_id not in self.clips:
             return
+        group = getattr(self, "group", None)
+        if group is not None and (group.closed or group.reunifying):
+            return
+        if group is not None:
+            group.cancel_emission(self)
+        if hasattr(self, "_split_clicks"):
+            self._split_clicks.clear()
+        self._action_serial = getattr(self, "_action_serial", 0) + 1
+        self._action_audible = False
         self._click_laugh_active = False
         self._drop_jelly()
         self.mode = "playing"
         self.cur_clip = clip_id
-        self.cur_index = 0
+        self._loop_start = (min(EMITTED_LOOP_FIRST_FRAME - 1, self.clips[clip_id].frames - 1)
+                            if getattr(self, "_emitted", False) and clip_id == "laugh" else None)
+        self.cur_index = self._loop_start if self._loop_start is not None else 0
         self.acc = 0.0
         log(f"播放 {self.clips[clip_id].label} (打断当前动作)"
             + ("" if with_audio else " — 自动播放,不出声"))
         if with_audio:
-            if self.audio.play(clip_id):
+            if self._loop_start is not None:
+                success = self.audio.play(clip_id, start_ms=self._loop_start * self.frame_ms,
+                                          end_ms=self.clips[clip_id].frames * self.frame_ms, loops=-1)
+            else:
+                success = self.audio.play(clip_id)
+            if success:
+                self._action_audible = True
                 # Hold frame zero while this device's queued audio reaches the output.
                 self.acc = -float(getattr(self.audio, "output_latency_ms", 0.0))
         else:
             self.audio.stop()         # 自动动作静音;顺带掐掉上一段手动动作的余音
+        self.last_tick = time.monotonic() if started_at is None else started_at
+        self._action_start = self.last_tick - self.acc / 1000
         self.draw()
 
+    def animation_snapshot(self, now=None):
+        now = time.monotonic() if now is None else now
+        if self.mode != "playing" or self._action_start is None:
+            return None
+        if (getattr(self, "_loop_start", None) is None
+                and (now - self._action_start) * 1000 >= self.clips[self.cur_clip].frames * self.frame_ms):
+            return None
+        return self.cur_clip, self._action_start, self._action_audible
+
+    def inherit_animation(self, source):
+        """Start an independent loop, inheriting only the source's audible state."""
+        now = time.monotonic()
+        snapshot = source.animation_snapshot(now)
+        if snapshot is None:
+            return
+        self._emitted = True
+        self.play(snapshot[0], with_audio=snapshot[2], started_at=now)
+
+    def stop_laugh(self):
+        group = getattr(self, "group", None)
+        if group is not None and (group.closed or group.reunifying):
+            return
+        if self.mode == "playing" and self.cur_clip == "laugh":
+            self._to_idle()
+
     def _to_idle(self) -> None:
-        """回待机。动作演完会走这里,单击中断动作也走这里(两条路要完全一致)。"""
+        """动作结束、显式停止或拖动时回到待机。"""
         self._click_laugh_active = False
+        group = getattr(self, "group", None)
+        if group is not None:
+            group.cancel_emission(self)
+        if hasattr(self, "_split_clicks"):
+            self._split_clicks.clear()
+        self._action_start = None
+        self._action_audible = False
+        self._loop_start = None
         self._drop_jelly()
         self.mode = "idle"
         self.cur_clip = self.idle_clip
@@ -1111,8 +1201,7 @@ class PetApp:
             self._eye_next_frame = 0.0
         self.audio.stop()             # 动作播完就停音(音频通常比画面略长一点)
         self.deadline = time.monotonic() + random.uniform(self.random_min_ms, self.random_max_ms) / 1000.0
-        log(f"回到待机(下次随机动作 {self.deadline - time.monotonic():.0f}s 后,"
-            f"可用单击动作中断)")
+        log(f"回到待机(下次随机动作 {self.deadline - time.monotonic():.0f}s 后)")
         self.draw()
 
     def tick(self) -> None:
@@ -1138,15 +1227,20 @@ class PetApp:
         now = time.monotonic()
         dt = now - self.last_tick
         self.last_tick = now
-        if dt > 0.25:            # 休眠/卡顿恢复:不跳帧
+        if dt > 0.25:            # 局部形变限制步长;动作使用绝对时钟补帧。
             dt = 0.25
 
         if self.mode == "playing":
             clip = self.clips[self.cur_clip]
-            self.acc += dt * 1000.0
-            if self.acc >= self.frame_ms:
-                self.acc -= self.frame_ms
-                self.cur_index += 1
+            start = getattr(self, "_action_start", None)
+            elapsed_ms = (now - start) * 1000 if start is not None else self.cur_index * self.frame_ms + self.acc + dt * 1000
+            elapsed_frames = max(0, int((elapsed_ms + 1e-7) / self.frame_ms))
+            self.acc = elapsed_ms - elapsed_frames * self.frame_ms
+            loop_start = getattr(self, "_loop_start", None)
+            index = (loop_start + elapsed_frames % (clip.frames - loop_start)
+                     if loop_start is not None else elapsed_frames)
+            if index != self.cur_index:
+                self.cur_index = index
                 if self.cur_index >= clip.frames:
                     self._to_idle()
                 else:
@@ -1166,8 +1260,6 @@ class PetApp:
                 if self._body is not None:
                     self._body.advance(now)
                     self._rebase_body()
-                    # Moving a Tk window can dispatch a pending focus callback,
-                    # which may cancel the drag and remove its body animation.
                     if self._body is not None and self._body.phase == "done":
                         self._finish_body()
                 self.draw()
@@ -1236,6 +1328,7 @@ class PetApp:
         self._win_x = self.root.winfo_x()
         self._win_y = self.root.winfo_y()
         self._press_local = (event.x, event.y)
+        self._press_valid = True
         if self._press_idle:
             point = self._content_point(event.x, event.y)
             if self._jelly is None:
@@ -1259,9 +1352,9 @@ class PetApp:
         if not self.drag_moved and abs(dx) < DRAG_THRESHOLD_PX and abs(dy) < DRAG_THRESHOLD_PX:
             return                      # 阈值内不动:轻点不跳位
         if not self.drag_moved:
-            # A real drag cancels a performance, including a locally triggered laugh.
-            # Preserve the original grab point while switching to the idle-body pose.
-            if self.mode == "playing":
+            # Ordinary performances stop on drag. Emitted loops keep their voice
+            # and clock; moving their window must not switch to the idle body.
+            if self.mode == "playing" and getattr(self, "_loop_start", None) is None:
                 press = (self._press_x, self._press_y, self._press_local,
                          self._win_x, self._win_y, self._press_time)
                 self._to_idle()
@@ -1269,6 +1362,10 @@ class PetApp:
                  self._win_x, self._win_y, self._press_time) = press
                 self.dragging = True
                 self._press_idle = True
+            if group is not None:
+                group.begin_drag(self)
+            if hasattr(self, "_split_clicks"):
+                self._split_clicks.clear()
             self._clicks.clear()
             self._press_valid = False
             now = time.monotonic()
@@ -1326,21 +1423,18 @@ class PetApp:
             log(f"拖动到 ({self.root.winfo_x()}, {self.root.winfo_y()})")
             if group is not None and group.try_merge(self):
                 return
+            if group is not None:
+                group.set_hover(self)
             if self._drag_body_eligible and self._body is not None:
                 now = time.monotonic()
                 self._body.release(self._release_speed(event, now), now)
                 self._wake_animation(now)
         self.dragging = False
         self._drag_body_eligible = False
-        # 原地单击(不是拖动)= 中断正在演的动作,立刻回待机。
-        # 只在"正在演"时才响应:待机时点一下不该把随机倒计时重置掉,
-        # 否则连点几下就等于把自动表演无限推迟。
-        if was_click and self.mode == "playing":
-            # 达到阈值后的继续点击不打断、不重播,也不累计下一轮。
-            if self._click_laugh_active:
-                return
-            log(f"单击中断 {self.clips[self.cur_clip].label}")
-            self._to_idle()
+        # 表演期间不再单击停止;大笑中的有效松开进入独立分裂计数。
+        if was_click and was_valid and self.mode == "playing":
+            if self.cur_clip == "laugh" and not self.menu_open:
+                self._complete_split_click(time.monotonic())
         elif was_click and was_valid and self.mode == "idle" and not self.menu_open:
             self._complete_click(time.monotonic())
 
@@ -1377,7 +1471,7 @@ class PetApp:
             return
         if group is not None:
             group.set_primary(self)
-            self.menu.entryconfigure("复制分身", state="disabled" if len(group.pets) >= MAX_PETS else "normal")
+            self.menu.entryconfigure("复制分身", state="disabled" if len(group.pets) + len(group.pending_bursts) >= MAX_PETS else "normal")
             self.menu.entryconfigure("归一", state="normal" if len(group.pets) > 1 else "disabled")
         self._drop_jelly()
         self.draw()

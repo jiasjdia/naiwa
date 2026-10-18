@@ -80,15 +80,17 @@ print(f"初始: scale={init_scale:.2f} 宠物高={app.win_h}px 窗口={app.win_w
       f"位置=({app.root.winfo_x()},{app.root.winfo_y()}) 基准={app.base_w}x{app.base_h}")
 
 print("\n== 1. 预设档位 ==")
-check("预设档 = 0.4/0.6/0.8/1.0/1.2",
-      pet_app.SCALE_PRESETS == (0.4, 0.6, 0.8, 1.0, 1.2), str(pet_app.SCALE_PRESETS))
+check("预设档 = 0.5/0.6/0.7/0.8",
+      pet_app.SCALE_PRESETS == (0.5, 0.6, 0.7, 0.8), str(pet_app.SCALE_PRESETS))
 check("初始 scale 落在预设区间内", pet_app.SCALE_MIN <= init_scale <= pet_app.SCALE_MAX,
       f"{init_scale}")
 check("初始档位序号 = 最接近的预设",
-      app._preset_index() == min(range(5), key=lambda i: abs(pet_app.SCALE_PRESETS[i] - init_scale)),
+      app._preset_index() == min(range(4), key=lambda i: abs(pet_app.SCALE_PRESETS[i] - init_scale)),
       str(app._preset_index()))
 # 下面用"和初始值不同"的档位来测,这样无论你当前调成多大都成立
-TARGET = 1.0 if abs(init_scale - 1.0) > 1e-6 else 0.6
+app.set_scale(0.5)
+app.root.update()
+TARGET = 0.8
 
 print(f"\n== 2. 改到 {TARGET}:窗口/画布/帧一起变 ==")
 before_pos = (app.root.winfo_x(), app.root.winfo_y())
@@ -136,10 +138,10 @@ app.set_scale(0.6); app.root.update()
 for target in (0.5, 0.4, 0.3):
     app.step_scale(-1); app.root.update()
     print(f"    变小 -> {app.global_scale:.2f} (宠物高 {app.win_h}px)")
-check("连续变小停在 0.4(下限)", abs(app.global_scale - 0.4) < 1e-9, f"{app.global_scale}")
+check("连续变小停在 0.5(下限)", abs(app.global_scale - 0.5) < 1e-9, f"{app.global_scale}")
 for _ in range(8):        # 0.4 → 1.2 需要 8 次 +0.1
     app.step_scale(+1); app.root.update()
-check("连续变大停在 1.2(上限)", abs(app.global_scale - 1.2) < 1e-9, f"{app.global_scale}")
+check("连续变大停在 0.8(上限)", abs(app.global_scale - 0.8) < 1e-9, f"{app.global_scale}")
 check("每一步都在预设区间内且窗口 = 基准 × scale",
       (app.win_w, app.win_h) == (round(app.base_w * app.global_scale),
                                  round(app.base_h * app.global_scale) + 2 * round(pet_app.BODY_PAD * app.global_scale)),
@@ -173,7 +175,7 @@ check("有「变小/变大」微调项", "变小" in src and "变大" in src)
 
 # ---- 收尾:销毁窗口 + 还原配置文件(音频是替身,没有进程要清) ----
 try:
-    app.root.destroy()
+    app.quit()
 except Exception:
     pass
 print("\n(测试只写入临时配置)")

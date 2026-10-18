@@ -12,14 +12,15 @@ import sys
 import wave
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "1.1.0"
+VERSION = "1.2.0"
+APP_NAME = "奶小蛙"
 
 
 def resource_files():
     manifest = json.loads((ROOT / "assets/manifest.json").read_text(encoding="utf-8"))
     if [c["id"] for c in manifest["clips"]] != ["laugh"]:
         raise ValueError("The current release only uses the laugh clip")
-    paths = [Path("assets/manifest.json"), Path("media_map.json"), Path("pet_settings.json")]
+    paths = [Path("assets/manifest.json"), Path("assets/app.ico"), Path("media_map.json"), Path("pet_settings.json")]
     for clip in manifest["clips"]:
         if len(clip["frameFiles"]) != clip["frames"]:
             raise ValueError("Animation frame count mismatch")
@@ -44,7 +45,7 @@ def copy_licenses(destination):
     destination.mkdir(parents=True, exist_ok=True)
     for source in (ROOT / "licenses").glob("*.txt"):
         shutil.copy2(source, destination / source.name)
-    for package in ("Pillow", "pygame", "psutil", "pyinstaller"):
+    for package in ("Pillow", "pygame", "psutil", "pymunk", "cffi", "pycparser", "pyinstaller"):
         distribution = importlib.metadata.distribution(package)
         for entry in distribution.files or ():
             if any(word in entry.name.lower() for word in ("license", "copying", "lgpl")):
@@ -62,7 +63,7 @@ def copy_licenses(destination):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--icon", type=Path, help="optional Windows .ico file")
+    parser.add_argument("--icon", type=Path, default=ROOT / "assets/app.ico", help="Windows .ico file (default: assets/app.ico)")
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("Build this Windows executable on Windows")
@@ -88,22 +89,32 @@ def main():
     # Windows' command-line length limit.
     spec = ROOT / "build/specs/naiwa.spec"
     spec.parent.mkdir(parents=True, exist_ok=True)
+    version_file = spec.parent / "version_info.txt"
+    version = tuple(map(int, VERSION.split("."))) + (0,)
+    fields = {"FileDescription": f"{APP_NAME}桌宠", "ProductName": APP_NAME,
+              "FileVersion": VERSION, "ProductVersion": VERSION,
+              "InternalName": APP_NAME, "OriginalFilename": f"{APP_NAME}.exe"}
+    strings = ", ".join(f"StringStruct({key!r}, {value!r})" for key, value in fields.items())
+    version_file.write_text(
+        f"VSVersionInfo(ffi=FixedFileInfo(filevers={version!r}, prodvers={version!r}), "
+        f"kids=[StringFileInfo([StringTable('080404b0', [{strings}])]), "
+        "VarFileInfo([VarStruct('Translation', [2052, 1200])])])", encoding="utf-8")
     datas = [(str(source), relative.parent.as_posix()) for source, relative in bundled]
     spec.write_text(
         f"a = Analysis([{str(ROOT / 'pet.pyw')!r}], pathex=[{str(ROOT)!r}], "
         f"binaries=[], datas={datas!r}, hiddenimports=[], hookspath=[], "
         f"hooksconfig={{}}, runtime_hooks=[], excludes={excludes!r}, noarchive=False)\n"
         "pyz = PYZ(a.pure)\n"
-        "exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='naiwa', "
+        f"exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name={APP_NAME!r}, "
         "debug=False, bootloader_ignore_signals=False, strip=False, upx=False, "
-        f"console=False, icon={icon!r})\n", encoding="utf-8")
+        f"console=False, icon={icon!r}, version={str(version_file)!r})\n", encoding="utf-8")
     command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
                "--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build/pyinstaller"), str(spec)]
     subprocess.run(command, cwd=ROOT, check=True)
     releases = ROOT / "releases"
     releases.mkdir(exist_ok=True)
-    executable = releases / "naiwa.exe"
-    shutil.copy2(ROOT / "dist/naiwa.exe", executable)
+    executable = releases / f"{APP_NAME}.exe"
+    shutil.copy2(ROOT / f"dist/{APP_NAME}.exe", executable)
     checksum = releases / "SHA256SUMS.txt"
     checksum.write_text(f"{hashlib.sha256(executable.read_bytes()).hexdigest()}  {executable.name}\n", encoding="utf-8")
     print(f"Built v{VERSION}: {executable} ({executable.stat().st_size / 1024**2:.1f} MiB)")
