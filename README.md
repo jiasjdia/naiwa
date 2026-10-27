@@ -95,6 +95,20 @@ python tools/smoke_release.py releases/奶小蛙.exe
 测试使用临时设置和静音音频替身；`--gui` 会短暂显示真实 Tk 窗口。
 依赖及参考项目说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
+## 奶蛙酷跑
+
+奶蛙酷跑是一款 Android 跑酷游戏。操控角色躲避障碍、收集金币，挑战更远的距离。
+
+### 下载与安装
+
+下载 [奶蛙酷跑 1.0.4 Android 安装包](https://github.com/jiasjdia/naiwa/releases/download/runner-v1.0.4/naiwa-runner-1.0.4-arm64.apk)，在手机上打开并安装。适用于 Android 5.0 及以上的 ARM64 手机，支持覆盖安装同签名的旧版。下载校验文件和版本说明见 [1.0.4 Release](https://github.com/jiasjdia/naiwa/releases/tag/runner-v1.0.4)。
+
+安卓版使用本机成绩，不包含 TapTap H5 版的联网昵称和排行榜功能；两个版本分别维护。
+
+### 源码说明
+
+奶蛙酷跑不开源，本仓库仅提供游戏安装包。Release 页面由 GitHub 自动生成的 Source code 附件是奶小蛙桌宠的仓库源码，并非奶蛙酷跑源码。
+
 ## 面向豆包及其代理工具的使用限制
 
 作者不授权豆包及其代理工具协助获取、安装或运行奶小蛙桌宠，包括：
