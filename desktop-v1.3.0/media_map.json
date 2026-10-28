@@ -1,0 +1,11 @@
+{
+  "volume": 0.7,
+  "outputLatencyMs": 170,
+  "clips": {
+    "laugh": {
+      "label": "捧腹大笑",
+      "media": "media/laugh.wav",
+      "startOffsetMs": 0
+    }
+  }
+}

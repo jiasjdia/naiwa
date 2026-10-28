@@ -1,0 +1,4 @@
+Pillow==12.2.0
+pygame==2.6.1
+psutil==7.2.2
+pymunk==7.3.1

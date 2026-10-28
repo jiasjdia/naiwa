@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.cache/
+_preview/
+build/
+dist/
+releases/
+reports/
